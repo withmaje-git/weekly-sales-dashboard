@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-클라리온 브랜드 멀티채널 매출 대시보드
+주간 매출 대시보드 (멀티채널)
 - 로컬 실행:   streamlit run app.py
 - 외부 공유:   Streamlit Community Cloud 배포 (배포_가이드.md 참고)
 데이터: data/sales_tidy.csv  (앱의 '데이터 업데이트' 탭에서 엑셀 업로드로 갱신)
@@ -13,7 +13,7 @@ import streamlit as st
 import etl_core as core
 
 # ------------------------------------------------------------------ 기본 설정
-st.set_page_config(page_title="클라리온 매출 대시보드", page_icon="📊", layout="wide")
+st.set_page_config(page_title="주간 매출 대시보드", page_icon="📊", layout="wide")
 
 DATA = os.path.join(os.path.dirname(__file__), "data", "sales_tidy.csv")
 WEEK_ORDER = core.WEEK_ORDER
@@ -42,7 +42,7 @@ def check_password():
         return True
     if st.session_state.get("auth_ok"):
         return True
-    st.markdown("### 🔒 클라리온 매출 대시보드")
+    st.markdown("### 🔒 주간 매출 대시보드")
     st.caption("관계자에게 전달받은 비밀번호를 입력해 주세요.")
     with st.form("login"):
         entered = st.text_input("비밀번호", type="password", label_visibility="collapsed",
@@ -137,7 +137,7 @@ f = df[df["채널"].isin(sel_ch) & df["상품"].isin(sel_prod)].copy()
 M = metric
 
 # ================================================================== 헤더
-st.title("📊 클라리온 브랜드 매출 대시보드")
+st.title("📊 주간 매출 대시보드")
 weeks_present = [w for w in WEEK_ORDER if w in df["주차"].unique()]
 rng = f"{core.WEEK_RANGE[weeks_present[0]].split('~')[0]} ~ {core.WEEK_RANGE[weeks_present[-1]].split('~')[1]}" if weeks_present else ""
 st.caption(f"최근 {len(weeks_present)}주 ({rng}) · 6개 판매채널 · 상품별 매출 추이  |  내부 공유용")
@@ -268,7 +268,7 @@ with tab4:
     st.dataframe(pivot.style.format("{:,.0f}"), use_container_width=True, height=460)
     csv = f.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
     st.download_button("⬇️ 원본 데이터 CSV 내려받기", csv,
-                       file_name="클라리온_매출_tidy.csv", mime="text/csv")
+                       file_name="매출_tidy.csv", mime="text/csv")
 
 # ------------------------------------------------------------------ 5) 데이터 업데이트
 with tab5:
@@ -297,7 +297,7 @@ with tab5:
 
     st.markdown(
         "이번 주 채널별 엑셀 파일을 그대로 올려 주세요. 파일명으로 채널·주차를 자동 인식합니다.\n\n"
-        "- 지원 파일: `클라리온_네이버_매출_MMDD-MMDD.xlsx` / `_11번가_ .xls` / `_옥션_` / `_지마켓_` / "
+        "- 지원 파일: `네이버_매출_MMDD-MMDD.xlsx` / `11번가_ .xls` / `옥션_` / `지마켓_` / "
         "`_쿠팡_` / `_GS SHOP_` \n"
         "- 같은 채널·주차 데이터는 **최신 업로드로 자동 교체**됩니다. (일부 채널만 올려도 됨)"
     )

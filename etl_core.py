@@ -3,7 +3,8 @@
 클라리온 매출 ETL 공용 로직 (로컬 실행 etl.py + 웹 업로드 app.py 가 함께 사용)
 
 핵심 함수:
-    parse_source(filename, source) -> DataFrame[채널, 상품명, 상품, 주차, 매출, 수량]
+    parse_source(filename, source) -> DataFrame[채널, 상품, 주차, 매출, 수량]
+        - 상품명(브랜드 포함 원본명)은 분류(classify)에만 쓰고 저장하지 않는다(공개 노출 방지).
         - filename 으로 채널을 판별하고, 채널별 시트/양식에 맞게 파싱한다.
         - source 는 파일 경로(str) 또는 업로드된 파일 객체(BytesIO 등) 모두 가능.
     merge_tidy(existing, new) -> DataFrame
@@ -14,7 +15,7 @@ import pandas as pd
 
 warnings.simplefilter("ignore")
 
-TIDY_COLS = ["채널", "상품명", "상품", "주차", "매출", "수량"]
+TIDY_COLS = ["채널", "상품", "주차", "매출", "수량"]
 
 # ------------------------------------------------------------- 주차 정의
 # 새 주차가 생기면 이 목록에 (이름, 표시구간, 시작일, 종료일) 한 줄만 추가하세요.
@@ -101,7 +102,8 @@ def detect_channel(filename):
 
 # ------------------------------------------------------------- 채널별 파서
 def _tidy(channel, name, week, sales, qty):
-    return {"채널": channel, "상품명": name, "상품": classify(name),
+    # name(원본 상품명, 브랜드 포함)은 classify 분류에만 사용하고 결과에는 담지 않는다.
+    return {"채널": channel, "상품": classify(name),
             "주차": week, "매출": float(sales), "수량": float(qty)}
 
 
