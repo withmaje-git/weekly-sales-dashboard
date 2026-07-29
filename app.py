@@ -159,6 +159,71 @@ c2.metric(f"주간 평균 {M}", fmt_metric(total / n_weeks, M))
 c3.metric(f"{weeks_present[-1] if weeks_present else '-'}(최근)", fmt_metric(last_wk, M),
           delta=f"{wow:+.1f}% (전주 대비)" if prev_wk else None)
 c4.metric("판매채널 / 상품 수", f"{f['채널'].nunique()}개 / {f['상품'].nunique()}종")
+
+# ================================================================== 핵심 인사이트
+def _signed(v):
+    return ("+" if v >= 0 else "−") + fmt_metric(abs(v), M)
+
+
+with st.container(border=True):
+    if len(weeks_present) >= 2:
+        _prev, _last = weeks_present[-2], weeks_present[-1]
+        fw = f[f["주차"].isin([_prev, _last])]
+
+        def _delta(index):
+            p = fw.pivot_table(index=index, columns="주차", values=M,
+                               aggfunc="sum", fill_value=0, observed=True)
+            for w in (_prev, _last):
+                if w not in p.columns:
+                    p[w] = 0
+            p["Δ"] = p[_last] - p[_prev]
+            return p
+
+        def _line(name, row):
+            base, d = row[_prev], row["Δ"]
+            pct = f" ({d / base * 100:+.0f}%)" if base > 0 else " (신규)" if d > 0 else ""
+            return f"{name} **{_signed(d)}**{pct}"
+
+        cp = _delta(["채널", "상품"])
+        ups = cp[cp["Δ"] > 0].sort_values("Δ", ascending=False).head(3)
+        downs = cp[cp["Δ"] < 0].sort_values("Δ").head(3)
+        ch = _delta("채널")
+
+        arrow = "▲ 증가" if last_wk >= prev_wk else "▼ 감소"
+        st.markdown(f"#### 🔎 핵심 인사이트 · {_prev} → {_last}")
+        st.markdown(
+            f"전체 {M}은 전주 대비 **{wow:+.1f}% {arrow}** "
+            f"({fmt_metric(prev_wk, M)} → {fmt_metric(last_wk, M)}, {_signed(last_wk - prev_wk)})"
+        )
+        col_up, col_down = st.columns(2)
+        with col_up:
+            st.markdown("**📈 증가 주도 (채널 · 상품)**")
+            if len(ups):
+                for (c_, p_), row in ups.iterrows():
+                    st.markdown(f"- {_line(f'{c_} · {p_}', row)}")
+            else:
+                st.markdown("- 증가 항목 없음")
+        with col_down:
+            st.markdown("**📉 감소 주도 (채널 · 상품)**")
+            if len(downs):
+                for (c_, p_), row in downs.iterrows():
+                    st.markdown(f"- {_line(f'{c_} · {p_}', row)}")
+            else:
+                st.markdown("- 감소 항목 없음")
+
+        parts = []
+        ch_up = ch[ch["Δ"] > 0].sort_values("Δ", ascending=False)
+        ch_dn = ch[ch["Δ"] < 0].sort_values("Δ")
+        if len(ch_up):
+            parts.append(f"가장 크게 늘어난 채널 **{ch_up.index[0]}** ({_signed(ch_up.iloc[0]['Δ'])})")
+        if len(ch_dn):
+            parts.append(f"가장 크게 줄어든 채널 **{ch_dn.index[0]}** ({_signed(ch_dn.iloc[0]['Δ'])})")
+        if parts:
+            st.caption("· " + " · ".join(parts))
+    else:
+        st.markdown("#### 🔎 핵심 인사이트")
+        st.caption("전주 대비 변화는 최소 2개 주차가 쌓이면 자동으로 표시됩니다.")
+
 st.divider()
 
 # ================================================================== 탭
@@ -310,7 +375,7 @@ with tab5:
             try:
                 part = core.parse_source(up.name, io.BytesIO(up.getvalue()))
                 if part.empty:
-                    errs.append(f"{up.name}: 인식된 매출 행이 없습니다(주차 정의 확인).")
+                    errs.append(f"{up.name}: 인식된 매출 행이 없습니다(파일 날짜/형식 확인).")
                 else:
                     parsed.append(part)
             except Exception as e:

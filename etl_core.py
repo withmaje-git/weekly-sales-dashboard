@@ -17,35 +17,56 @@ warnings.simplefilter("ignore")
 
 TIDY_COLS = ["채널", "상품", "주차", "매출", "수량"]
 
-# ------------------------------------------------------------- 주차 정의
-# 새 주차가 생기면 이 목록에 (이름, 표시구간, 시작일, 종료일) 한 줄만 추가하세요.
-WEEKS = [
-    ("1주차", "06/29~07/05", pd.Timestamp("2026-06-29"), pd.Timestamp("2026-07-05")),
-    ("2주차", "07/06~07/12", pd.Timestamp("2026-07-06"), pd.Timestamp("2026-07-12")),
-    ("3주차", "07/13~07/19", pd.Timestamp("2026-07-13"), pd.Timestamp("2026-07-19")),
-    ("4주차", "07/20~07/26", pd.Timestamp("2026-07-20"), pd.Timestamp("2026-07-26")),
-]
-WEEK_ORDER = [w[0] for w in WEEKS]
-WEEK_RANGE = {w[0]: w[1] for w in WEEKS}
+# ------------------------------------------------------------- 주차 정의(자동)
+# 1주차 시작일(월요일)만 정해두면 이후 주차는 날짜로 자동 계산된다.
+# → 새 주차가 생겨도 코드 수정이 필요 없다. (엑셀만 업로드하면 자동 인식)
+WEEK1_START = pd.Timestamp("2026-06-29")   # 1주차 = 06/29(월)~07/05(일), 이후 매주 월~일
+N_WEEKS = 60                               # 미리 정의해 둘 주차 수(약 1년 이상)
+
+
+def _week_start(idx):
+    return WEEK1_START + pd.Timedelta(days=7 * (idx - 1))
+
+
+def _week_range_str(idx):
+    s = _week_start(idx)
+    e = s + pd.Timedelta(days=6)
+    return f"{s.strftime('%m/%d')}~{e.strftime('%m/%d')}"
+
+
+WEEK_ORDER = [f"{i}주차" for i in range(1, N_WEEKS + 1)]
+WEEK_RANGE = {f"{i}주차": _week_range_str(i) for i in range(1, N_WEEKS + 1)}
 
 
 def week_of(date):
+    """날짜 → 'N주차'. 1주차 시작 이전이거나 정의범위 밖이면 None."""
     try:
         d = pd.Timestamp(date).normalize()
     except Exception:
         return None
-    for name, _, a, b in WEEKS:
-        if a <= d <= b:
-            return name
-    return None
+    if d < WEEK1_START:
+        return None
+    idx = (d - WEEK1_START).days // 7 + 1
+    return f"{idx}주차" if 1 <= idx <= N_WEEKS else None
 
 
 def week_from_filename(fname):
+    """파일명의 MMDD-MMDD(시작-종료)에서 시작일로 주차를 계산. 연도 자동 보정."""
     m = re.search(r"(\d{4})-(\d{4})", fname)
     if not m:
         return None
     mm, dd = int(m.group(1)[:2]), int(m.group(1)[2:])
-    return week_of(pd.Timestamp(2026, mm, dd))
+    # 파일명엔 연도가 없으므로, 1주차 시작연도부터 다음 연도까지 중 유효한 날짜를 찾는다.
+    for yr in (WEEK1_START.year, WEEK1_START.year + 1):
+        try:
+            d = pd.Timestamp(yr, mm, dd)
+        except ValueError:
+            continue
+        if d >= WEEK1_START:
+            wk = week_of(d)
+            if wk:
+                return wk
+    return None
 
 
 # ------------------------------------------------------------- 상품 분류
