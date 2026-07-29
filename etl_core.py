@@ -23,6 +23,7 @@ WEEKS = [
     ("1주차", "06/29~07/05", pd.Timestamp("2026-06-29"), pd.Timestamp("2026-07-05")),
     ("2주차", "07/06~07/12", pd.Timestamp("2026-07-06"), pd.Timestamp("2026-07-12")),
     ("3주차", "07/13~07/19", pd.Timestamp("2026-07-13"), pd.Timestamp("2026-07-19")),
+    ("4주차", "07/20~07/26", pd.Timestamp("2026-07-20"), pd.Timestamp("2026-07-26")),
 ]
 WEEK_ORDER = [w[0] for w in WEEKS]
 WEEK_RANGE = {w[0]: w[1] for w in WEEKS}
