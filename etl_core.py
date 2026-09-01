@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-클라리온 매출 ETL 공용 로직 (로컬 실행 etl.py + 웹 업로드 app.py 가 함께 사용)
+매출 ETL 공용 로직 (로컬 실행 etl.py + 웹 업로드 app.py 가 함께 사용)
 
 핵심 함수:
     parse_source(filename, source) -> DataFrame[채널, 상품, 주차, 매출, 수량]
@@ -16,6 +16,7 @@ import pandas as pd
 warnings.simplefilter("ignore")
 
 TIDY_COLS = ["채널", "상품", "주차", "매출", "수량"]
+MONTHLY_TIDY_COLS = ["채널", "상품", "월", "매출", "수량"]   # 월='YYYY-MM' (달력 월)
 
 # ------------------------------------------------------------- 주차 정의(자동)
 # 1주차 시작일(월요일)만 정해두면 이후 주차는 날짜로 자동 계산된다.
@@ -66,6 +67,44 @@ def week_from_filename(fname):
             wk = week_of(d)
             if wk:
                 return wk
+    return None
+
+
+# ------------------------------------------------------------- 달력 월(1일~말일)
+def month_of(date):
+    """날짜 → 'YYYY-MM'. 파싱 불가/결측이면 None."""
+    try:
+        d = pd.Timestamp(date)
+    except Exception:
+        return None
+    if pd.isna(d):
+        return None
+    return f"{d.year}-{d.month:02d}"
+
+
+def month_from_filename(fname):
+    """파일명에서 월을 추론(쿠팡/GS SHOP 등 행별 날짜가 없는 채널용).
+    지원 형식: YYYY-MM / YYYY.MM / YYYYMM · MMDD-MMDD(시작월) · 'N월'. 연도 자동 보정."""
+    s = str(fname)
+    m = re.search(r"(20\d{2})[.\-_ ]?(0[1-9]|1[0-2])(?!\d)", s)   # YYYY-MM 계열
+    if m:
+        return f"{int(m.group(1))}-{int(m.group(2)):02d}"
+    m = re.search(r"(\d{4})-(\d{4})", s)                          # MMDD-MMDD → 시작월
+    if m:
+        mm, dd = int(m.group(1)[:2]), int(m.group(1)[2:])
+        for yr in (WEEK1_START.year, WEEK1_START.year + 1):
+            try:
+                d = pd.Timestamp(yr, mm, dd)
+            except ValueError:
+                continue
+            if d >= WEEK1_START:
+                return f"{d.year}-{d.month:02d}"
+    m = re.search(r"(1[0-2]|[1-9])\s*월", s)                      # 'N월'
+    if m:
+        mm = int(m.group(1))
+        for yr in (WEEK1_START.year, WEEK1_START.year + 1):
+            if pd.Timestamp(yr, mm, 1) >= WEEK1_START.replace(day=1):
+                return f"{yr}-{mm:02d}"
     return None
 
 
@@ -198,3 +237,82 @@ def merge_tidy(existing, new):
     mask = existing.apply(lambda r: (r["채널"], r["주차"]) in keys, axis=1)
     kept = existing[~mask]
     return pd.concat([kept, new], ignore_index=True)[TIDY_COLS]
+
+
+# ------------------------------------------------------------- 월별(달력 월) 파서
+def _tidy_m(channel, name, month, sales, qty):
+    return {"채널": channel, "상품": classify(name),
+            "월": month, "매출": float(sales), "수량": float(qty)}
+
+
+def parse_source_monthly(filename, source):
+    """채널별 '한 달치' 원본 → tidy[채널,상품,월,매출,수량]. 실제 판매일자 기준 달력 월 집계.
+    parse_source(주간)와 동일한 시트/컬럼 규칙을 쓰되, 주차 대신 'YYYY-MM'로 묶는다.
+    네이버/11번가/옥션/지마켓=행별 날짜로, 쿠팡/GS SHOP=파일명의 월로 판별."""
+    ch = detect_channel(filename)
+    if ch is None:
+        raise ValueError(f"채널을 인식할 수 없는 파일명입니다: {filename}")
+    eng = _engine_for(filename)
+    rows = []
+
+    if ch == "네이버":
+        df = pd.read_excel(source, sheet_name="SALES", header=0, engine=eng)
+        df = df[df["채널상품명"] != "전체"].copy()
+        df["월"] = df["날짜"].map(month_of)
+        df["매출"] = _num(df["판매금액(순)"]); df["수량"] = _num(df["결제상품수량"])
+        g = df.groupby(["채널상품명", "월"], as_index=False).agg(매출=("매출", "sum"), 수량=("수량", "sum"))
+        for _, r in g.iterrows():
+            rows.append(_tidy_m(ch, r["채널상품명"], r["월"], r["매출"], r["수량"]))
+
+    elif ch == "11번가":
+        df = pd.read_excel(source, sheet_name=0, header=5, engine=eng)
+        df = df[df["상품명"].notna()].copy()
+        df["월"] = pd.to_datetime(df["주문일시"], errors="coerce").map(month_of)
+        df["매출"] = _num(df["주문금액"]); df["수량"] = _num(df["수량"])
+        g = df.groupby(["상품명", "월"], as_index=False).agg(매출=("매출", "sum"), 수량=("수량", "sum"))
+        for _, r in g.iterrows():
+            rows.append(_tidy_m(ch, r["상품명"], r["월"], r["매출"], r["수량"]))
+
+    elif ch in ("옥션", "지마켓"):
+        df = pd.read_excel(source, sheet_name="상품별 판매내역", header=2, engine=eng)
+        df = df[df["상품명"].notna()].copy()
+        df["월"] = pd.to_datetime(df["기준일"], errors="coerce").map(month_of)
+        df["매출"] = _num(df["판매금액"]) - _num(df["취소금액"])
+        df["수량"] = _num(df["판매수량"]) - _num(df["취소수량"])
+        g = df.groupby(["상품명", "월"], as_index=False).agg(매출=("매출", "sum"), 수량=("수량", "sum"))
+        for _, r in g.iterrows():
+            rows.append(_tidy_m(ch, r["상품명"], r["월"], r["매출"], r["수량"]))
+
+    elif ch == "쿠팡":
+        mo = month_from_filename(filename)
+        df = pd.read_excel(source, sheet_name="vendor item metrics", header=0, engine=eng)
+        df = df[df["상품명"].notna()].copy()
+        df["매출"] = _num(df["매출(원)"]); df["수량"] = _num(df["판매량"])
+        g = df.groupby(["상품명"], as_index=False).agg(매출=("매출", "sum"), 수량=("수량", "sum"))
+        for _, r in g.iterrows():
+            rows.append(_tidy_m(ch, r["상품명"], mo, r["매출"], r["수량"]))
+
+    elif ch == "GS SHOP":
+        mo = month_from_filename(filename)
+        df = pd.read_excel(source, sheet_name="Sheet0", header=0, engine=eng)
+        df = df[df["브랜드명"].notna()].copy()
+        df["매출"] = _num(df["순주문금액"]); df["수량"] = _num(df["순주문수량"])
+        g = df.groupby(["상품명"], as_index=False).agg(매출=("매출", "sum"), 수량=("수량", "sum"))
+        for _, r in g.iterrows():
+            rows.append(_tidy_m(ch, r["상품명"], mo, r["매출"], r["수량"]))
+
+    out = pd.DataFrame(rows, columns=MONTHLY_TIDY_COLS)
+    out = out[(out["월"].notna()) & (out["매출"] != 0)].copy()
+    return out
+
+
+def merge_monthly(existing, new):
+    """new 에 들어있는 (채널, 월) 조합은 기존에서 제거하고 new 로 대체."""
+    if existing is None or existing.empty:
+        return new.copy()
+    if new is None or new.empty:
+        return existing.copy()
+    keys = set(map(tuple, new[["채널", "월"]].drop_duplicates().values))
+    mask = existing.apply(lambda r: (r["채널"], r["월"]) in keys, axis=1)
+    kept = existing[~mask]
+    return pd.concat([kept, new], ignore_index=True)[MONTHLY_TIDY_COLS]

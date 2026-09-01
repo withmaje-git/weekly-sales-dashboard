@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-클라리온 매출 로컬 ETL
+매출 로컬 ETL
 - 다운로드 폴더의 원본 엑셀들을 읽어 data/sales_tidy.csv 로 정리합니다.
 - 실제 파싱 로직은 etl_core.py 를 공용으로 사용합니다.
 
@@ -15,14 +15,14 @@ import etl_core as core
 SRC = r"C:\Users\lucky\Downloads"
 OUT = os.path.join(os.path.dirname(__file__), "data", "sales_tidy.csv")
 
-# 채널별 원본 파일 패턴
+# 채널별 원본 파일 패턴 (파일명 앞의 브랜드 접두어는 * 로 매칭)
 PATTERNS = [
-    "클라리온_네이버_매출_*.xlsx",
-    "클라리온_11번가_매출_*.xls",
-    "클라리온_옥션_매출_*.xlsx",
-    "클라리온_지마켓_매출_*.xlsx",
-    "클라리온_쿠팡_매출_*.xlsx",
-    "클라리온_GS SHOP_매출_*.xlsx",
+    "*네이버_매출_*.xlsx",
+    "*11번가_매출_*.xls",
+    "*옥션_매출_*.xlsx",
+    "*지마켓_매출_*.xlsx",
+    "*쿠팡_매출_*.xlsx",
+    "*GS SHOP_매출_*.xlsx",
 ]
 
 
