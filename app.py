@@ -199,7 +199,18 @@ st.sidebar.caption("※ 광고매출은 각 매체가 보고한 전환매출(광
 
 f = df[df["채널"].isin(sel_ch) & df["상품"].isin(sel_prod)].copy()
 af = ads_df[ads_df["광고채널"].isin(sel_ad_ch)].copy() if not ads_df.empty else ads_df
+mf = (monthly_df[monthly_df["채널"].isin(sel_ch) & monthly_df["상품"].isin(sel_prod)].copy()
+      if not monthly_df.empty else monthly_df)
 M = metric
+
+months_present = sorted(mf["월"].astype(str).unique()) if not mf.empty else []
+_one_year = len({m.split("-")[0] for m in months_present}) <= 1
+
+
+def mlabel(mk):
+    """'YYYY-MM' → 'M월'(단일연도) 또는 'YY.MM'(여러 해)."""
+    y, m = mk.split("-")
+    return f"{int(m)}월" if _one_year else f"{y[2:]}.{m}"
 
 # ================================================================== 헤더
 st.title("📊 주간 매출 대시보드")
@@ -320,23 +331,15 @@ with tab1:
     # ---------------- 월별 매출 추이 (별도 업로드, 달력 월 1일~말일) ----------------
     st.divider()
     st.subheader(f"월별 {M} 추이")
-    mf = (monthly_df[monthly_df["채널"].isin(sel_ch) & monthly_df["상품"].isin(sel_prod)].copy()
-          if not monthly_df.empty else monthly_df)
 
     if mf.empty:
         st.info("월별 매출 데이터가 없습니다. **⚙️ 데이터 업데이트 → 🗓️ 월별 매출 데이터**에서 "
                 "채널별 ‘한 달치’ 원본 엑셀을 올려 주세요. 실제 판매일자 기준으로 달력 월(1일~말일)로 집계합니다.")
     else:
-        months = sorted(mf["월"].astype(str).unique())
+        months = months_present
         mon_tot = mf.groupby("월")[M].sum().reindex(months).fillna(0)
-        one_year = len({m.split("-")[0] for m in months}) <= 1
-
-        def _mlabel(mk):
-            y, mm = mk.split("-")
-            return f"{int(mm)}월" if one_year else f"{y[2:]}.{mm}"
-
         mvals = mon_tot.values
-        mlabels = [_mlabel(m) for m in months]
+        mlabels = [mlabel(m) for m in months]
         mtext = [fmt_metric(v, M) for v in mvals]
         figm = go.Figure(go.Bar(x=mlabels, y=mvals, text=mtext, textposition="outside",
                                 marker_color=PALETTE[3], marker_line_width=0, width=0.5,
@@ -351,11 +354,12 @@ with tab1:
             for i in range(len(months) - 1):
                 a, b = mon_tot.iloc[i], mon_tot.iloc[i + 1]
                 d = (b / a - 1) * 100 if a else 0
-                cols[i].metric(f"{_mlabel(months[i])} → {_mlabel(months[i+1])}",
+                cols[i].metric(f"{mlabel(months[i])} → {mlabel(months[i+1])}",
                                fmt_metric(b, M), delta=f"{d:+.1f}%")
 
         st.caption("월별은 별도로 올린 ‘한 달치’ 원본에서 **실제 판매일자 기준 달력 월(1일~말일)**로 집계합니다. "
-                   "판매채널·상품·지표 필터가 함께 적용됩니다. (주차 데이터와 독립적으로 업로드)")
+                   "판매채널·상품·지표 필터가 함께 적용됩니다. (주차 데이터와 독립적으로 업로드) "
+                   "채널별·상품별 월 분해는 **🏬 채널별 · 💊 상품별 탭 하단**에서 볼 수 있습니다.")
 
 # ------------------------------------------------------------------ 2) 채널별
 with tab2:
@@ -395,6 +399,39 @@ with tab2:
         figp.update_layout(showlegend=False)
         st.plotly_chart(figp, use_container_width=True)
 
+    # ---------------- 월별 · 채널별 (달력 월) ----------------
+    st.divider()
+    st.subheader(f"채널별 · 월별 {M}")
+    if mf.empty:
+        st.info("월별 매출 데이터가 없습니다. **⚙️ 데이터 업데이트 → 🗓️ 월별 매출 데이터**에서 "
+                "채널별 ‘한 달치’ 원본을 올려 주세요.")
+    else:
+        m_present = [c for c in CHANNELS if c in mf["채널"].unique()]
+        mlabels = [mlabel(m) for m in months_present]
+        figmc = go.Figure()
+        for c in m_present:
+            sub = mf[mf["채널"] == c].groupby("월")[M].sum().reindex(months_present).fillna(0)
+            figmc.add_bar(name=c, x=mlabels, y=sub.values, marker_color=CH_COLOR[c],
+                          marker_line=dict(color=SURFACE, width=2),
+                          hovertemplate=f"{c}<br>%{{x}}<br>{M} %{{y:,}}<extra></extra>")
+        figmc.update_layout(barmode="stack")
+        base_layout(figmc, height=400)
+        st.plotly_chart(figmc, use_container_width=True)
+
+        pivm = mf.pivot_table(index="채널", columns="월", values=M, aggfunc="sum", fill_value=0)
+        pivm = pivm.reindex(index=m_present, columns=months_present, fill_value=0)
+        disp = pivm.copy()
+        disp.columns = [mlabel(c) for c in disp.columns]
+        if len(months_present) >= 2:
+            a, b = months_present[-2], months_present[-1]
+            disp[f"{mlabel(b)} Δ"] = pivm[b] - pivm[a]
+        disp["합계"] = pivm.sum(axis=1)
+        disp = disp.sort_values("합계", ascending=False)
+        st.dataframe(disp.style.format("{:,.0f}"), use_container_width=True)
+        if len(months_present) >= 2:
+            st.caption(f"‘{mlabel(b)} Δ’ = {mlabel(b)} − {mlabel(a)} (전월 대비 증감). "
+                       "달력 월(1일~말일) 기준, 채널·상품·지표 필터 적용.")
+
 # ------------------------------------------------------------------ 3) 상품별
 with tab3:
     st.subheader("상품별 · 주차별 매출")
@@ -426,6 +463,44 @@ with tab3:
     st.plotly_chart(figr, use_container_width=True)
     st.caption("상품은 상품명 메인 키워드로 자동 분류했습니다 (예: '유기농 올리브오일 30캡슐 6박스' → 올리브오일). "
                "GS SHOP의 Plus/PB 상품도 같은 키워드로 매칭됩니다.")
+
+    # ---------------- 월별 · 상품별 (달력 월) ----------------
+    st.divider()
+    st.subheader(f"상품별 · 월별 {M}")
+    if mf.empty:
+        st.info("월별 매출 데이터가 없습니다. **⚙️ 데이터 업데이트 → 🗓️ 월별 매출 데이터**에서 "
+                "채널별 ‘한 달치’ 원본을 올려 주세요.")
+    else:
+        m_prod_tot = mf.groupby("상품")[M].sum().sort_values(ascending=False)
+        m_top = m_prod_tot.head(7).index.tolist()
+        gm = mf.copy()
+        gm["상품군"] = gm["상품"].where(gm["상품"].isin(m_top), "기타")
+        m_order = m_top + (["기타"] if (gm["상품군"] == "기타").any() else [])
+        PCOLORm = {p: PALETTE[i] for i, p in enumerate(m_order)}
+        mlabels = [mlabel(m) for m in months_present]
+        figmp = go.Figure()
+        for p in m_order:
+            sub = gm[gm["상품군"] == p].groupby("월")[M].sum().reindex(months_present).fillna(0)
+            figmp.add_bar(name=p, x=mlabels, y=sub.values, marker_color=PCOLORm[p],
+                          marker_line=dict(color=SURFACE, width=2),
+                          hovertemplate=f"{p}<br>%{{x}}<br>{M} %{{y:,}}<extra></extra>")
+        figmp.update_layout(barmode="stack")
+        base_layout(figmp, height=440)
+        st.plotly_chart(figmp, use_container_width=True)
+
+        pivm = mf.pivot_table(index="상품", columns="월", values=M, aggfunc="sum", fill_value=0)
+        pivm = pivm.reindex(columns=months_present, fill_value=0)
+        disp = pivm.copy()
+        disp.columns = [mlabel(c) for c in disp.columns]
+        if len(months_present) >= 2:
+            a, b = months_present[-2], months_present[-1]
+            disp[f"{mlabel(b)} Δ"] = pivm[b] - pivm[a]
+        disp["합계"] = pivm.sum(axis=1)
+        disp = disp.sort_values("합계", ascending=False)
+        st.dataframe(disp.style.format("{:,.0f}"), use_container_width=True)
+        st.caption("막대는 상위 7개 상품 + 기타, 표는 전체 상품 × 월. "
+                   + (f"‘{mlabel(b)} Δ’ = 전월 대비 증감. " if len(months_present) >= 2 else "")
+                   + "달력 월(1일~말일) 기준.")
 
 # ------------------------------------------------------------------ A) 광고 성과
 with tabA:
